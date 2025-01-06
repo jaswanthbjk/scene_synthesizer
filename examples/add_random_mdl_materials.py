@@ -138,7 +138,7 @@ materials = {
 # The keys are regular expressions of prim_paths in the USD
 geometry2material = {
     "(.*cabinet.*corpus.*|.*cabinet.*door|.*drawer.*board.*|.*cabinet.*closed.*|/world/kitchen_island/.*)|/world/corner_(1|2|3)": "cabinet",
-    "(.*refrigerator.*|.*range_hood.*|.*oven.*|.*dishwasher.*)": "appliances",
+    "(.*refrigerator.*|.*range_hood.*|.*range.*|.*dishwasher.*)": "appliances",
     "/world/oven/corpus/heater.*": 'rusted metal',
     "/world/oven/corpus/top": 'glossy black',
     ".*/corpus/sink": 'sink',

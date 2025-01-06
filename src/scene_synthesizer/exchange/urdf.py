@@ -54,10 +54,10 @@ def export_urdf(scene,
     if fname is not None and folder is not None:
         log.warn(f"URDF export: folder={folder} will be ignored since file name is already specified.")
     
-    if folder is None or len(folder) == 0:
-        folder = "."
     if fname is not None:
         folder, fname = os.path.split(fname)
+    if folder is None or len(folder) == 0:
+        folder = "."
     
     # Remember current scene configuration to re-apply it after export
     current_configuration = scene.get_configuration()

@@ -1367,7 +1367,7 @@ class USDAsset(Asset):
             scale = usd_import.get_scale(mesh_prim)
             if not np.allclose(scale, [1.0, 1.0, 1.0]):
                 geometry.apply_scale(scale)
-            
+
             node_name = _usd_prim_path_to_node_name(mesh_path)
             parent_node_name = _usd_prim_path_to_node_name(mesh_prim.GetParent().GetPath())
             if _usd_prim_path_to_node_name(mesh_prim.GetParent().GetPath()) not in s.graph.nodes:
@@ -1467,6 +1467,10 @@ class MJCFAsset(Asset):
 
         Args:
             fname (str): File name.
+            **geom_class_visual (str): Class string in geom element that indicates whether this is visual geometry. Defaults to 'visual'.
+            **geom_class_collision (str): Class string in geom element that indicates whether this is collision geometry. Defaults to 'collision'.
+            **geom_groups_visual (list[int]): List of body/geom/group numbers that will be considered a visual geometry. Defaults to all.
+            **geom_groups_collision (list[int]): List of body/geom/group numbers that will be considered a collision geometry. Defaults to all.
 
         Raises:
             ValueError: Raises exception if file doesn't exist.
@@ -1541,33 +1545,34 @@ class MJCFAsset(Asset):
         elif elem.tag == "geom":
             log.debug(f"Adding geom {identifier_fn(elem)} to {identifier_fn(elem.parent)}")
             
-            unkown_geometry = False
-            if elem.type == "mesh":
+            unknown_geometry = False
+            if elem.type == "mesh" or (hasattr(elem, 'mesh') and elem.mesh is not None):
                 geometry = trimesh.load(
                     trimesh.util.wrap_as_stream(elem.mesh.file.contents),
                     file_type=elem.mesh.file.extension[1:],
                 )
 
                 # Set mesh material
-                if elem.material.texture is not None:
-                    material = trimesh.visual.material.SimpleMaterial(
-                        image=Image.open(trimesh.util.wrap_as_stream(elem.material.texture.file.contents))
-                    )
-                    texture = trimesh.visual.TextureVisuals(uv=geometry.visual.uv, material=material)
-                    geometry.visual = texture
-                else:
-                    specular = getattr(elem.material, 'specular', None)
-                    diffuse = getattr(elem.material, 'rgba', None)
+                if elem.material is not None:
+                    if elem.material.texture is not None:
+                        material = trimesh.visual.material.SimpleMaterial(
+                            image=Image.open(trimesh.util.wrap_as_stream(elem.material.texture.file.contents))
+                        )
+                        texture = trimesh.visual.TextureVisuals(uv=geometry.visual.uv, material=material)
+                        geometry.visual = texture
+                    else:
+                        specular = getattr(elem.material, 'specular', None)
+                        diffuse = getattr(elem.material, 'rgba', None)
 
-                    num_faces = len(geometry.faces)
-                    face_colors = np.tile(diffuse, (num_faces, 1))
-                    # 'emission'
-                    # 'reflectance'
-                    # 'metallic'
-                    # 'roughness'
-                    # 'rgba'
+                        num_faces = len(geometry.faces)
+                        face_colors = np.tile(diffuse, (num_faces, 1))
+                        # 'emission'
+                        # 'reflectance'
+                        # 'metallic'
+                        # 'roughness'
+                        # 'rgba'
 
-                    geometry.visual = trimesh.visual.ColorVisuals(mesh=geometry, face_colors=face_colors)   
+                        geometry.visual = trimesh.visual.ColorVisuals(mesh=geometry, face_colors=face_colors)   
             elif elem.type == "sphere":
                 # The sphere type defines a sphere.
                 # Only one size parameter is used, specifying the radius of the sphere.
@@ -1600,12 +1605,16 @@ class MJCFAsset(Asset):
                     transform=self._get_transform(elem, rad_conversion_fn),
                 )
             else:
-                unkown_geometry = True
+                unknown_geometry = True
 
-            if not unkown_geometry and ((use_collision_geometry and elem.dclass.dclass == 'visual') or (use_collision_geometry == False and elem.dclass.dclass == 'collision')):
-                log.debug(f"Ignore geometry {elem.type} since it is of class '{elem.dclass.dclass}'.")
+            elem_dclass_visual_label = self._attributes.get("geom_class_visual", 'visual')
+            elem_dclass_collision_label = self._attributes.get("geom_class_collision", 'collision')
+            elem_dclass = None if elem.dclass is None else elem.dclass.dclass
+
+            if not unknown_geometry and ((use_collision_geometry and elem_dclass == elem_dclass_visual_label) or (use_collision_geometry == False and elem_dclass == elem_dclass_collision_label)):
+                log.debug(f"Ignore geometry {elem.type} since it is of class '{elem_dclass}'.")
             else:
-                if not unkown_geometry:
+                if not unknown_geometry:
                     if elem.mass is not None:
                         if geometry.is_volume:
                             volume = geometry.volume
@@ -1622,16 +1631,34 @@ class MJCFAsset(Asset):
                     if elem.friction is not None:
                         # 3D array with sliding, torsional, and rolling friction coefficients
                         pass
+                    
+                    ignore_geometry = False
+                    if elem_dclass is not None:
+                        if elem_dclass == elem_dclass_visual_label:
+                            geometry.metadata["layer"] = 'visual'
+                        elif elem_dclass == elem_dclass_collision_label:
+                            geometry.metadata["layer"] = 'collision'
+                        else:
+                            geometry.metadata["layer"] = elem_dclass
+                    else:
+                        if elem.group is not None:
+                            if "geom_groups_collision" in self._attributes:
+                                if elem.group in self._attributes['geom_groups_collision']:
+                                    geometry.metadata["layer"] = 'collision'
+                            if "geom_groups_visual" in self._attributes:
+                                if elem.group in self._attributes['geom_groups_visual']:
+                                    geometry.metadata["layer"] = 'visual'
+                            if "geom_groups_visual" in self._attributes and "geom_groups_collision" in self._attributes and elem.group not in self._attributes['geom_groups_collision'] and elem.group not in self._attributes['geom_groups_visual']:
+                                ignore_geometry = True
 
-                    geometry.metadata["layer"] = elem.dclass.dclass
-
-                    utils.add_node_to_scene(
-                        scene=scene,
-                        geometry=geometry,
-                        node_name=identifier_fn(elem),
-                        geom_name=identifier_fn(elem),
-                        parent_node_name=identifier_fn(elem.parent),
-                    )
+                    if not ignore_geometry:
+                        utils.add_node_to_scene(
+                            scene=scene,
+                            geometry=geometry,
+                            node_name=identifier_fn(elem),
+                            geom_name=identifier_fn(elem),
+                            parent_node_name=identifier_fn(elem.parent),
+                        )
         else:
             log.debug(f"Not used: {elem.tag}, {identifier_fn(elem)}")
 
@@ -1714,7 +1741,14 @@ class MJCFAsset(Asset):
         scene = trimesh.Scene(base_frame=namespace)
         identifier_fn = self._mjcf_id(namespace=namespace, worldbody=root.worldbody)
         
-        self._traverse_xml_tree(elem=root.worldbody, node_name=scene.graph.base_frame, scene=scene, identifier_fn=identifier_fn, rad_conversion_fn=rad_conversion_fn, use_collision_geometry=use_collision_geometry)
+        self._traverse_xml_tree(
+            elem=root.worldbody,
+            node_name=scene.graph.base_frame,
+            scene=scene,
+            identifier_fn=identifier_fn,
+            rad_conversion_fn=rad_conversion_fn,
+            use_collision_geometry=use_collision_geometry
+        )
 
         self._add_joints(root, scene, identifier_fn=identifier_fn, rad_conversion_fn=rad_conversion_fn)
 

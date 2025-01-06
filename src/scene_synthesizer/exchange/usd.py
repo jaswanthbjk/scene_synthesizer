@@ -56,11 +56,12 @@ def export_usd(
     if fname is not None and folder is not None:
         log.warn(f"USD export: folder={folder} will be ignored since file name is already specified.")
     
-    if folder is None or len(folder) == 0:
-        folder = "."
     if fname is not None:
         folder = os.path.dirname(fname)
         fname = os.path.basename(fname)
+
+    if folder is None or len(folder) == 0:
+        folder = "."
 
     # Remember current scene configuration to re-apply it after export
     current_configuration = scene.get_configuration()
@@ -286,10 +287,27 @@ def export_usd(
                 if not hasattr(g_vis.material, 'image'):
                     # This is a trimesh.visual.material.PBRMaterial
                     material = g_vis.material
+                    diffuse_texture = None
+                    if material.baseColorTexture is not None:
+                        image_dims = len(np.asarray(material.baseColorTexture).shape)
+                        if image_dims == 3:
+                            diffuse_texture = np.transpose(
+                                np.asarray(material.baseColorTexture) / 255.0, axes=(2, 0, 1)
+                            )
+                        else:
+                            diffuse_texture = np.array(
+                                [
+                                    np.asarray(material.baseColorTexture) / 255.0,
+                                    np.asarray(material.baseColorTexture) / 255.0,
+                                    np.asarray(material.baseColorTexture) / 255.0,
+                                ]
+                            )
+
                     material_textures = usd_export.PBRMaterial(
-                        diffuse_color=g_vis.material.baseColorFactor[:3] / 255.0,  # what about main_color?
+                        diffuse_color=material.baseColorFactor[:3] / 255.0 if material.baseColorFactor is not None else None,
                         metallic_value=material.metallicFactor,
                         roughness_value=material.roughnessFactor,
+                        diffuse_texture=diffuse_texture,
                     )
                 elif g_vis.material.image is None:
                     # This is a trimesh.visual.material.SimpleMaterial
