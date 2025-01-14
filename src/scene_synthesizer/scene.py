@@ -1005,58 +1005,86 @@ class Scene(object):
         dimensions,
         thickness=0.15,
         overhang=0.0,
+        offset=0.0,
         hole_extents=(0, 0),
         hole_offset=(0, 0),
         use_primitives=True,
+        object_ids=None,
+        use_collision_geometry=True,
+        joint_type=None,
     ):
         """Add walls/box assets to any combination of the six faces of the scene volume.
 
         Args:
             dimensions (list[str]): In which dimension to add a wall. Any subset of ['x', '-x', 'y', '-y', 'z', '-z'].
             thickness (float, optional): Thickness of the wall. Defaults to 0.15.
-            overhang (float, optional): The amount of overhang of the wall. Can be a single scalar, a 3-dim list or a 6-dim list. Defaults to 0.0.
+            overhang (float, optional): The amount of overhang of the wall. Can be a single scalar or a len(dimensions)-dim list. Defaults to 0.0.
+            offset (float, optional): The distance between wall and closest scene geometry. Can be a single scalar or a len(dimensions)-dim list. Defaults to 0.0.
             hole_extents (list[float], optional): 2-dim extents of the hole in the wall. Defaults to (0, 0).
             hole_offset (tuple[float], optional): 2-dim position offset of the hole in the wall. Defaults to (0, 0).
             use_primitives (bool, optional): Whether to create a mesh or use a primitive. Defaults to True.
+            object_ids (list[str], optional): A list of object names used for adding walls, needs to have same length as dimensions. If None, names will be "wall_{dim}". Defaults to None
+            use_collision_geometry (bool, optional): Defaults to True.
+            joint_type (str, optional): Defaults to None.
 
         Raises:
-            ValueError: If overhang is not a float, or a list of length 3 or 6.
+            ValueError: If overhang is not a float, or a list of length len(dimensions).
+            ValueError: If object_ids is not None and len(object_ids) != len(dimensions).
         """
         overhangs = None
+        offsets = None
+        dim_to_index = {'x': 0, '-x': 1, 'y': 2, '-y': 3, 'z': 4, '-z': 5}
+
         if isinstance(overhang, float):
             overhangs = [overhang] * 6
-        elif isinstance(overhang, list):
-            if len(overhang) == 3:
-                overhangs = [
-                    overhang[0],
-                    overhang[0],
-                    overhang[1],
-                    overhang[1],
-                    overhang[2],
-                    overhang[2],
-                ]
-            elif len(overhang) == 6:
-                overhangs = overhang
+        elif isinstance(overhang, list) and len(overhang) == len(dimensions):
+            overhangs = [0.0] * 6
+            for i, d in enumerate(dimensions):
+                overhangs[dim_to_index[d]] = overhang[i]
+
         if overhangs is None:
-            raise ValueError("Overhang needs to be a float or a list with 3 or 6 floats.")
+            raise ValueError("Overhang needs to be a float or a list with len(dimensions) floats.")
+        
+        if isinstance(offset, float):
+            offsets = [offset] * 6
+        elif isinstance(offset, list) and len(offset) == len(dimensions):
+            offsets = [0.0] * 6
+            for i, d in enumerate(dimensions):
+                offsets[dim_to_index[d]] = offset[i]
+        
+        if offsets is None:
+            raise ValueError("Offset needs to be a float or a list with len(dimensions) floats.")
+        offsets = np.array(offsets)
+
+        if object_ids is not None and len(object_ids) != len(dimensions):
+            raise ValueError("If object_ids is set it needs to have as many elements as dimensions.")
+
+        scene_bounds = self.get_bounds()
+        scene_extents = self.get_extents()
+
+        scene_bounds[0] -= offsets[1::2]
+        scene_bounds[1] += offsets[0::2]
+
+        scene_extents += (offsets[1::2] + offsets[0::2])
 
         extents = {
             "x": [
                 thickness,
-                self._scene.extents[1] + overhangs[2] + overhangs[3],
-                self._scene.extents[2] + overhangs[4] + overhangs[5],
+                scene_extents[1] + overhangs[2] + overhangs[3],
+                scene_extents[2] + overhangs[4] + overhangs[5],
             ],
             "y": [
-                self._scene.extents[0] + overhangs[0] + overhangs[1],
+                scene_extents[0] + overhangs[0] + overhangs[1],
                 thickness,
-                self._scene.extents[2] + overhangs[4] + overhangs[5],
+                scene_extents[2] + overhangs[4] + overhangs[5],
             ],
             "z": [
-                self._scene.extents[0] + overhangs[0] + overhangs[1],
-                self._scene.extents[1] + overhangs[2] + overhangs[3],
+                scene_extents[0] + overhangs[0] + overhangs[1],
+                scene_extents[1] + overhangs[2] + overhangs[3],
                 thickness,
             ],
         }
+        
         if all(hole_extents):  # check if hole is not zero
             hole_extents_per_dim = {
                 "x": [None, hole_extents[0], hole_extents[1]],
@@ -1069,23 +1097,10 @@ class Scene(object):
             if all(hole_extents):
                 hole_extents_per_dim[f"-{k}"] = hole_extents_per_dim[k]
 
-        parent_achors = {
-            "x": ("top", "center", "center"),
-            "-x": ("bottom", "center", "center"),
-            "y": ("center", "top", "center"),
-            "-y": ("center", "bottom", "center"),
-            "z": ("center", "center", "top"),
-            "-z": ("center", "center", "bottom"),
-        }
-        obj_anchors = {
-            "x": ("bottom", "center", "center"),
-            "-x": ("top", "center", "center"),
-            "y": ("center", "bottom", "center"),
-            "-y": ("center", "top", "center"),
-            "z": ("center", "center", "bottom"),
-            "-z": ("center", "center", "top"),
-        }
-        for dim in dimensions:
+        if object_ids is None:
+            object_ids = [f"wall_{dim}" for dim in dimensions]
+
+        for dim, obj_id in zip(dimensions, object_ids):
             if all(hole_extents):
                 wall = BoxWithHoleAsset(
                     *extents[dim],
@@ -1094,16 +1109,30 @@ class Scene(object):
                     use_primitives=use_primitives,
                 )
             else:
-                wall = BoxAsset(extents=extents[dim]) if use_primitives else BoxMeshAsset(extents=extents[dim])
+                if use_primitives:
+                    wall = BoxAsset(extents=extents[dim])
+                else:
+                    wall = BoxMeshAsset(extents=extents[dim])
+
+            if dim == 'x':
+                transform = tra.translation_matrix(scene_bounds[1] * np.array([1.0, 0.0, 0.0]) + [thickness/2.0, 0, 0] + (scene_bounds[1] + scene_bounds[0]) * np.array([0, 0.5, 0.5]))
+            elif dim == '-x':
+                transform = tra.translation_matrix(scene_bounds[0] * np.array([1.0, 0.0, 0.0]) - [thickness/2.0, 0, 0] + (scene_bounds[1] + scene_bounds[0]) * np.array([0, 0.5, 0.5]))
+            elif dim == 'y':
+                transform = tra.translation_matrix(scene_bounds[1] * np.array([0.0, 1.0, 0.0]) + [0, thickness/2.0, 0] + (scene_bounds[1] + scene_bounds[0]) * np.array([0.5, 0, 0.5]))
+            elif dim == '-y':
+                transform = tra.translation_matrix(scene_bounds[0] * np.array([0.0, 1.0, 0.0]) - [0, thickness/2.0, 0] + (scene_bounds[1] + scene_bounds[0]) * np.array([0.5, 0, 0.5]))
+            elif dim == 'z':
+                transform = tra.translation_matrix(scene_bounds[1] * np.array([0.0, 0.0, 1.0]) + [0, 0, thickness/2.0] + (scene_bounds[1] + scene_bounds[0]) * np.array([0.5, 0.5, 0]))
+            elif dim == '-z':
+                transform = tra.translation_matrix(scene_bounds[0] * np.array([0.0, 0.0, 1.0]) - [0, 0, thickness/2.0] + (scene_bounds[1] + scene_bounds[0]) * np.array([0.5, 0.5, 0]))
 
             self.add_object(
                 wall,
-                f"wall_{dim}",
-                connect_parent_id=self._scene.graph.base_frame,
-                connect_parent_anchor=parent_achors[dim],
-                connect_obj_anchor=obj_anchors[dim],
-                use_collision_geometry=True,
-                joint_type=None,
+                obj_id,
+                transform=transform,
+                use_collision_geometry=use_collision_geometry,
+                joint_type=joint_type,
             )
 
     def distance_matrix_geometry(self, nodes_geometry=None, return_names=False):
@@ -1883,12 +1912,14 @@ class Scene(object):
             **limit_effort (float, optional): Joint effort limit.
             **limit_lower (float, optional): Lower joint limit.
             **limit_upper (float, optional): Upper joint limit.
+            **stiffness (float, optional): Joint stiffness. Will add a drive to the joint during USD export.
+            **damping (float, optional): Joint damping. Will add a drive to the joint during USD export.
 
         Raises:
             ValueError: Error raised if property is unknown.
         """
         for k in kwargs:
-            if k not in ('name', 'q', 'origin', 'axis', 'type', 'limit_velocity', 'limit_effort', 'limit_lower', 'limit_upper'):
+            if k not in ('name', 'q', 'origin', 'axis', 'type', 'limit_velocity', 'limit_effort', 'limit_lower', 'limit_upper', 'stiffness', 'damping'):
                 raise ValueError(f"Unknown joint property {k}. Can't update.")
         
         parent_node, child_node = self.get_joint_parent_child_node(joint_id)
@@ -1897,10 +1928,8 @@ class Scene(object):
 
         if (parent_node, child_node) not in scene_edge_data:
             raise ValueError(f"Joint {joint_id} not in scene. Can't update its properties.")
-        
-        scene_edge_data[(parent_node, child_node)].update(
-            {"extras": {"joint": {**kwargs}}}
-        )
+
+        scene_edge_data[(parent_node, child_node)]["extras"]["joint"].update({**kwargs})
 
         # clear cache
         self.get_joint_names.cache_clear()
@@ -2107,6 +2136,8 @@ class Scene(object):
             **limit_effort (float, optional): Joint effort limit. Defaults to None.
             **limit_lower (float, optional): Lower joint limit. Defaults to None.
             **limit_upper (float, optional): Upper joint limit. Defaults to None.
+            **stiffness (float, optional): Joint stiffness. Defaults to None.
+            **damping (float, optional): Joint damping. Defaults to None.
 
         Raises:
             ValueError: If name already exists.
@@ -3060,6 +3091,7 @@ class Scene(object):
         max_iter=100,
         distance_above_support=0.001,
         joint_type="floating",
+        valid_placement_fn=lambda obj_asset, support, placement_T: True,
         **kwargs,
     ):
         """Add object by placing it in a non-colliding pose on top of a support surface or inside a container.
@@ -3075,6 +3107,7 @@ class Scene(object):
             max_iter (int, optional): Maximum number of attempts to find a placement pose. Defaults to 100.
             distance_above_support (float, optional): Distance the object mesh will be placed above the support surface. Defaults to 0.0.
             joint_type (str, optional): The type of joint that will be used to connect this object to the scene ("floating" or "fixed"). None has a similar effect as "fixed". Defaults to "floating".
+            valid_placement_fn (function, optional): Function for testing valid placements. Defaults to returning True.
             **use_collision_geometry (bool, optional): Defaults to default_use_collision_geometry.
             **kwargs: Keyword arguments that will be delegated to add_object.
 
@@ -3113,6 +3146,7 @@ class Scene(object):
             max_iter=max_iter,
             distance_above_support=distance_above_support,
             joint_type=joint_type,
+            valid_placement_fn=valid_placement_fn,
             **kwargs,
         )
 

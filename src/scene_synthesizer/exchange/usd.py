@@ -459,6 +459,8 @@ def export_usd(
                 if joint_info["type"] == "revolute"
                 else +1e4,
                 joint_type="PhysicsRevoluteJoint",
+                stiffness=joint_info.get("stiffness", None),
+                damping=joint_info.get("damping", None),
             )
         elif joint_info["type"] == "prismatic":
             joint_offset = trimesh.geometry.align_vectors(joint_info["axis"], [0, 0, 1])
@@ -475,6 +477,8 @@ def export_usd(
                 limit_lower=joint_info["limit_lower"],
                 limit_upper=joint_info["limit_upper"],
                 joint_type="PhysicsPrismaticJoint",
+                stiffness=joint_info.get("stiffness", None),
+                damping=joint_info.get("damping", None),
             )
         elif joint_info["type"] == "floating":
             pass

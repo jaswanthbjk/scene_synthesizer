@@ -236,3 +236,20 @@ def test_get_joint_types(cabinet_scene):
         len(joint_types2)
         == len(cabinet_scene.get_joint_types(include_fixed_floating_joints=True)) + 2
     )
+
+def test_update_joint_properties(cabinet_scene):
+    joint_props = cabinet_scene.get_joint_properties()
+    
+    update_joint_properties = {
+        'object/corpus_to_door_0_1': {'stiffness': 10.0},
+        'object/corpus_to_door_1_1': {'damping': 1.3},
+    }
+
+    for joint_id in update_joint_properties:
+        cabinet_scene.update_joint_properties(joint_id=joint_id, **update_joint_properties[joint_id])
+
+        joint_props[joint_id].update(update_joint_properties[joint_id])
+
+    joint_props_new = cabinet_scene.get_joint_properties()
+    
+    assert joint_props == joint_props_new

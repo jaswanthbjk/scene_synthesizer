@@ -53,18 +53,20 @@ Other procedural pipelines either focus on learning visual models [@Denninger202
 With `scene_synthesizer` we present a library that simplifies the process of writing scene randomizers in Python, with a particular focus on physics simulations for robot manipulation. It is fully simulator-agnostic.
 
 # Features & Functionality
-
-`scene_synthesizer` bases its scene represenation on `trimesh` [@trimesh], enabling the use of many existing geometric algorithms.
-Assets can be either loaded from file (all standard mesh formats including those representing articulations such as USD, URDF, MJCF) or instantiated from 30 different procedural objects, most of them kitchen-themed.
-The placement of assets is supported by defining object-agnostic anchor points, or through automatic labelling of support surfaces and containment volumes.
-Scenes can be fully articulated and six common kitchen layouts are already included.
-Scene export to formats such as USD and URDF enable the use of various physic simulators.
+`scene_synthesizer` leverages `trimesh` [@trimesh] for its scene representation, enabling access to a wide range of existing geometric algorithms.
+Assets can be either loaded from files (supporting all standard mesh formats, including those for articulated structures like USD, URDF, and MJCF) or instantiated procedurally from a library of 30 predefined objects, most of which are kitchen-themed.
+Asset placement is facilitated by defining object-agnostic anchor points or through automated labeling of support surfaces and containment volumes.
+The software allows users to specify physical properties such as collision geometry, mass, density, center of mass, friction, and joint constraints, including parameters like stiffness, damping, limits, maximum efforts, and velocities.
+Scenes can be fully articulated, with six common kitchen layouts provided as examples.
+While many included procedural assets and layouts are tailored to the kitchen domain, the software is versatile and does not impose constraints on the type of scenes that can be generated.
+The synthesized scenes can be exported to formats like USD and URDF, making them compatible with various physics simulators.
 `scene_synthesizer` has few dependencies and is easily extendable and customizable.
 
 # Example Use Cases
 
 We have used `scene_synthesizer` to train neural robot motion planners [@fishman2022motionpolicynetworks], neural collision checkers [@murali2023cabinet],
 pick-and-place policies [@yuan2023m2t2multitaskmaskedtransformer], visuomotor policies [@dalal2023optimus], to fine-tune Vision-Language Models [@yuan2024robopointvisionlanguagemodelspatial], and in planning-based data generation pipelines [@garrett2024simpler].
+In all these examples, the data was generated in simulation using procedurally created scenes featuring object-filled shelves, tables, microwaves, countertops, cabinets, drawers, etc.
 
 # Acknowledgements
 

@@ -556,25 +556,34 @@ def add_joint(
     joint_axis="Z",
     limit_lower=None,
     limit_upper=None,
+    damping=None,
+    stiffness=None,
     physx_joint_api=True,
-    physics_drive_api=False,
 ):
-    physics_schema_arguments = {}
     VALID_JOINT_TYPES = ["PhysicsRevoluteJoint", "PhysicsPrismaticJoint", "PhysicsFixedJoint"]
     if joint_type not in VALID_JOINT_TYPES:
         raise ValueError(
             f"Unknown USD joint_type '{joint_type}'.  Valid types: {VALID_JOINT_TYPES}."
         )
-    if joint_type == "PhysicsRevoluteJoint" or joint_type == "PhysicsPrismaticJoint":
-        if physics_drive_api:
-            physics_schema_arguments["angular_drive_api"] = True
-
+    
     # Add the prim
     joint_prim = stage.DefinePrim(scene_path, joint_type)
 
-    if physx_joint_api:
-        physics_schema_arguments["physx_joint_api"] = True
-    add_physics_schemas(stage=stage, scene_path=scene_path, **physics_schema_arguments)
+    # Add drive if stiffness or damping are defined
+    if physx_joint_api and (damping is not None or stiffness is not None):
+        if joint_type == "PhysicsRevoluteJoint":
+            joint_prim.AddAppliedSchema("PhysicsDriveAPI:angular")
+            drive_api = UsdPhysics.DriveAPI(joint_prim, 'angular')
+        elif joint_type == "PhysicsPrismaticJoint":
+            joint_prim.AddAppliedSchema("PhysicsDriveAPI:linear")
+            drive_api = UsdPhysics.DriveAPI(joint_prim, 'linear')
+
+        if damping is not None:
+            drive_api.CreateDampingAttr().Set(damping)
+        if stiffness is not None:
+            drive_api.CreateStiffnessAttr().Set(stiffness)
+
+    add_physics_schemas(stage=stage, scene_path=scene_path, physx_joint_api=physx_joint_api)
 
     if joint_type == "PhysicsRevoluteJoint":
         joint_api = UsdPhysics.RevoluteJoint(joint_prim)
@@ -611,6 +620,7 @@ def add_joint(
 
     if limit_upper is not None:
         joint_api.CreateUpperLimitAttr().Set(limit_upper)
+    
 
 
 def add_joint_info(stage, scene_path, names, positions, add_articulation_api=True):
@@ -647,8 +657,6 @@ def add_physics_schemas(
     rigid_body_api=False,
     mass_api=False,
     physx_joint_api=False,
-    angular_drive_api=False,
-    linear_drive_api=False,
     articulation_api=False,
 ):
     prim = stage.GetPrimAtPath(scene_path)
@@ -665,10 +673,7 @@ def add_physics_schemas(
         prim.AddAppliedSchema("PhysicsMassAPI")
     if physx_joint_api:
         prim.AddAppliedSchema("PhysxJointAPI")
-    if angular_drive_api:
-        prim.AddAppliedSchema("PhysicsDriveAPI:angular")
-    if linear_drive_api:
-        prim.AddAppliedSchema("PhysicsDriveAPI:linear")
+    
     if articulation_api:
         prim.AddAppliedSchema("PhysicsArticulationRootAPI")
         prim.AddAppliedSchema("PhysxArticulationAPI")

@@ -931,14 +931,14 @@ class CabinetAsset(URDFAsset):
             handle_offset (tupe(float, float), optional): Defaults to None.
             handle_shape_args (dict, optional): Arguments for procedural handles. If None, will create handle made out of boxes. Defaults to None.
             door_shape_args (dict, optional): Arguments for procedural door moldings. If None, will create box-shaped door. Defaults to None.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
 
         Raises:
             ValueError: If neither width nor compartment_widths is defined.
             ValueError: If neither height nor compartment_heights is defined.
             ValueError: If compartment type is unknown.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=CabinetAsset._create_yourdfpy_model(
@@ -1656,14 +1656,14 @@ class CubbyShelfAsset(URDFAsset):
             handle_offset (tupe(float, float), optional): Defaults to None. x-z offset for handle placement location.
             handle_shape_args (dict, optional): Arguments for handles. If None, will create handle made out of boxes. Defaults to None.
             door_shape_args (dict, optional): Arguments for procedural door moldings. If None, will create box-shaped door. Defaults to None.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
 
         Raises:
             ValueError: If neither width nor compartment_widths is defined.
             ValueError: If neither height nor compartment_heights is defined.
             ValueError: If compartment type is unknown.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=CubbyShelfAsset.create_yourdfpy_model(
@@ -2674,9 +2674,7 @@ class RefrigeratorAsset(URDFAsset):
             door_shape_args (dict, optional): Arguments for procedural door shape. Defaults to fridge door.
             **kwargs: Arguments will be delegated to constructor of URDFAsset.
         """
-
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=self._create_yourdfpy_model(
@@ -3272,11 +3270,9 @@ class MicrowaveAsset(URDFAsset):
             handle_num_segments_curvature (float, optional): Defaults to 5.
             handle_aspect_ratio_cross_section (float, optional): Defaults to 0.5.
             tmp_mesh_dir (str, optional): Directory to generate mesh. Defaults to /tmp.
-            **kwargs: Arguments will be delegated to constructor of Asset.
+            **kwargs: Arguments will be delegated to constructor of URDFAsset.
         """
-
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=self._create_yourdfpy_model(
@@ -3579,8 +3575,7 @@ class RangeAsset(URDFAsset):
                 f" {width}."
             )
 
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         compartment_mask = []
         compartment_types = []
@@ -3728,6 +3723,7 @@ class DishwasherAsset(URDFAsset):
             handle_depth (float, optional): Depth of handle. Defaults to 0.04.
             handle_offset (float, optional): Offset of handle. Defaults to 0.04.
             handle_shape_args (dict, optional): Handle shape parameters. Defaults to { "straight_ratio": 0.7, "curvature_ratio": 0.7, "num_segments_cross_section": 10, "num_segments_curvature": 6, "aspect_ratio_cross_section": 0.5, "tmp_mesh_dir": "/tmp", }.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
 
         Raises:
             ValueError: If handle_width is bigger than width.
@@ -3738,8 +3734,7 @@ class DishwasherAsset(URDFAsset):
                 f" width {width}."
             )
 
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         compartment_mask = []
         compartment_types = []
@@ -3856,6 +3851,7 @@ class SinkCabinetAsset(URDFAsset):
             handle_offset (tuple[float, float], optional): Offset of handles. Defaults to None.
             handle_shape_args (dict, optional): Handle shape parameters. Defaults to None.
             door_shape_args (dict, optional): Cabinet door shape parameters. Defaults to None.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
 
         Raises:
             ValueError: If sink_height is bigger than cabinet height.
@@ -3867,8 +3863,7 @@ class SinkCabinetAsset(URDFAsset):
                     " SinkCabinetAsset."
                 )
 
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         compartment_mask = np.array([[0, 0], [1, 2]])
         compartment_types = ["closed", "door_right", "door_left"]
@@ -4105,9 +4100,9 @@ class BaseCabinetAsset(URDFAsset):
             handle_offset (tuple[float, float], optional): Offset of handle. Defaults to None.
             handle_shape_args (dict, optional): Arguments for procedural handle shape generator. Defaults to None.
             door_shape_args (dict, optional): Arguments for procedural door shape generator. Defaults to None.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         if num_drawers_horizontal is None:
             num_drawers_horizontal = max(1, len(lower_compartment_types))
@@ -4428,6 +4423,7 @@ class RecursivelyPartitionedCabinetAsset(URDFAsset):
             handle_offset (float, optional): Defaults to None.
             handle_shape_args (dict, optional): Arguments for procedural handles. If None, will create handle made out of boxes. Defaults to None.
             seed (int, numpy.random._generator.Generator, optional): A seed or random number generator. Defaults to None which creates a new default random number generator.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
         self.width = width
         self.depth = depth
@@ -4512,8 +4508,7 @@ class RecursivelyPartitionedCabinetAsset(URDFAsset):
             **split_args,
         )
 
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=self._cabinet,
@@ -5144,8 +5139,8 @@ class RecursivelyPartitionedCabinetAsset(URDFAsset):
         child,
         origin,
         axis,
-        damping=0.05,
-        friction=0.025,
+        damping=None,
+        friction=None,
     ):
         """Create a URDF joint element for a revolute joint.
 
@@ -5154,8 +5149,8 @@ class RecursivelyPartitionedCabinetAsset(URDFAsset):
             child (str): Name of child link.
             origin (np.ndarray): 4x4 homogeneous matrix for joint pose.
             axis (tuple, optional): Joint axis.
-            damping (float, optional): Joint damping. Defaults to 0.05.
-            friction (float, optional): Joint friction. Defaults to 0.025.
+            damping (float, optional): Joint damping. Defaults to None.
+            friction (float, optional): Joint friction. Defaults to None.
 
         Returns:
             yourdfpy.Joint: Joint element.
@@ -5184,8 +5179,8 @@ class RecursivelyPartitionedCabinetAsset(URDFAsset):
         axis,
         lower=0.0,
         upper=0.4,
-        damping=0.01,
-        friction=0.01,
+        damping=None,
+        friction=None,
     ):
         """Create a URDF joint element for a prismatic joint.
 
@@ -5196,8 +5191,8 @@ class RecursivelyPartitionedCabinetAsset(URDFAsset):
             axis (tuple, optional): Joint axis.
             lower (float, optional): Lower joint limit. Defaults to 0.0.
             upper (float, optional): Upper joint limit. Defaults to 0.4.
-            damping (float, optional): Joint damping. Defaults to 0.01.
-            friction (float, optional): Joint friction. Defaults to 0.01.
+            damping (float, optional): Joint damping. Defaults to None.
+            friction (float, optional): Joint friction. Defaults to None.
 
         Returns:
             yourdfpy.Joint: Joint element.
@@ -5760,9 +5755,9 @@ class WallCabinetAsset(URDFAsset):
             handle_offset (tuple, optional): Handle offset. Defaults to (-0.25, 0.05).
             handle_shape_args (dict, optional): Handle shape parameters. Defaults to None.
             door_shape_args (dict, optional): Door shape parameters. Defaults to None.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         compartment_mask = [[i for i, _ in enumerate(compartment_types)]]
 
@@ -5865,13 +5860,13 @@ class KitchenIslandAsset(URDFAsset):
             handle_offset (tuple[float, float], optional): Offset of handles. Defaults to (0.18, 0.05).
             handle_shape_args (dict, optional): Handle shape parameters. Defaults to None.
             door_shape_args (dict, optional): Door shape parameters. Defaults to None.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
 
         Raises:
             ValueError: If depth_storage is bigger than depth.
             ValueError: If depth_side_storage is bigger than width/2.0.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         if depth_storage > depth:
             raise ValueError(
@@ -6025,6 +6020,7 @@ class CabinetDoorAsset(TrimeshAsset):
             knot_3 (float, optional): A knot of the B-spline used to interpolate the silhoutte. Defaults to 0.8.
             num_depth_sections (int, optional): Number of interpolated sections along B-Spline. Defaults to 20.
             use_primitives (bool, optional): Defaults to False.
+            **kwargs: Keyword argument passed onto the TrimeshAsset constructor.
         """
         mesh = CabinetDoorAsset._create_door_mesh(
             width=width,
@@ -6356,9 +6352,9 @@ class HandWheelAsset(URDFAsset):
             joint_limit_upper (float, optional): Upper revolute joint limit in radians. Defaults to 10.0.
             joint_limit_velocity (float, optional): Joint velocity limit. Defaults to 100.0.
             joint_limit_effort (float, optional): Joint effort limit. Defaults to 1000.0.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         wheel_mesh = HandWheelAsset.create_handwheel_mesh(
             radius=radius,
@@ -6536,9 +6532,9 @@ class CNCMachineAsset(URDFAsset):
             button_size (float, optional): Size of the buttons. If None or 0.0 no buttons will be added. Buttons are articulated. Defaults to 0.03.
             button_panel_offset (tuple, optional): Offset of the button panel relative to the left front part of the machine. Defaults to (0, 0).
             window_size (float, optional): Relative size of the window in the front door. Number between 0.0 (no window) and 1.0 (full window). Defaults to 0.
+            **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=self._create_yourdfpy_model(
@@ -6978,8 +6974,7 @@ class LeverSwitchAsset(URDFAsset):
             joint_limit_effort (float, optional): Joint effort limit. Defaults to 1000.0.
             **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=LeverSwitchAsset._create_yourdfpy_model(
@@ -7217,8 +7212,7 @@ class SafetySwitchAsset(URDFAsset):
             joint_limit_effort (float, optional): Joint effort limit. Defaults to 1000.0.
             **kwargs: Keyword argument passed onto the URDFAsset constructor.
         """
-        self._origin = np.eye(4)
-        self._attributes = kwargs
+        self._init_default_attributes(**kwargs)
 
         self._model = yourdfpy.URDF(
             robot=LeverSwitchAsset._create_yourdfpy_model(

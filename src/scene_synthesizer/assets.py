@@ -792,28 +792,14 @@ class URDFAsset(Asset):
             ValueError: Raises exception if file doesn't exist.
         """
         self._fname = fname
-        self._origin = np.eye(4)
-        self._attributes = kwargs
-
         self._stable_poses = None
+
+        self._init_default_attributes(**kwargs)
 
         self._model = self._load(
             fname,
             force_mesh=kwargs.get("force_mesh", False),
             filename_handler=kwargs.get("filename_handler", None),
-        )
-
-        self._default_joint_limit_lower = kwargs.get(
-            "default_joint_limit_lower", constants.DEFAULT_JOINT_LIMIT_LOWER
-        )
-        self._default_joint_limit_upper = kwargs.get(
-            "default_joint_limit_upper", constants.DEFAULT_JOINT_LIMIT_UPPER
-        )
-        self._default_joint_limit_velocity = kwargs.get(
-            "default_joint_limit_velocity", constants.DEFAULT_JOINT_LIMIT_VELOCITY
-        )
-        self._default_joint_limit_effort = kwargs.get(
-            "default_joint_limit_effort", constants.DEFAULT_JOINT_LIMIT_EFFORT
         )
 
         if kwargs.get("ignore_articulation", False):
@@ -851,6 +837,29 @@ class URDFAsset(Asset):
                 )
 
             self._configuration = cfg
+
+    def _init_default_attributes(self, **kwargs):
+        self._origin = np.eye(4)
+        self._attributes = kwargs
+        
+        self._default_joint_limit_lower = kwargs.get(
+            "default_joint_limit_lower", constants.DEFAULT_JOINT_LIMIT_LOWER
+        )
+        self._default_joint_limit_upper = kwargs.get(
+            "default_joint_limit_upper", constants.DEFAULT_JOINT_LIMIT_UPPER
+        )
+        self._default_joint_limit_velocity = kwargs.get(
+            "default_joint_limit_velocity", constants.DEFAULT_JOINT_LIMIT_VELOCITY
+        )
+        self._default_joint_limit_effort = kwargs.get(
+            "default_joint_limit_effort", constants.DEFAULT_JOINT_LIMIT_EFFORT
+        )
+        self._default_joint_stiffness = kwargs.get(
+            "default_joint_stiffness", constants.DEFAULT_JOINT_STIFFNESS
+        )
+        self._default_joint_damping = kwargs.get(
+            "default_joint_damping", constants.DEFAULT_JOINT_DAMPING
+        )
 
     def _load(self, fname, force_mesh=False, filename_handler=None):
         log.debug(f"Loading asset {fname}")
@@ -955,25 +964,32 @@ class URDFAsset(Asset):
             limit_upper = self._joint_limit_upper(joint)
             limit_lower = self._joint_limit_lower(joint)
 
+            damping = self._default_joint_damping if joint.dynamics is None or joint.dynamics.damping is None else joint.dynamics.damping
+
+            joint_property_dict = {
+                "name": f"{namespace}/{joint.name}",
+                "type": joint.type,
+                "q": self._configuration[self._model.actuated_joints.index(joint)]
+                if joint in self._model.actuated_joints
+                else 0.0,
+                "axis": joint.axis.tolist()
+                if not joint.type == "fixed"
+                else [1.0, 0, 0],
+                "origin": joint.origin.tolist(),
+                "limit_velocity": limit_velocity,
+                "limit_effort": limit_effort,
+                "limit_lower": limit_lower,
+                "limit_upper": limit_upper,
+            }
+
+            if damping is not None:
+                joint_property_dict['damping'] = damping
+
             # add articulation data as edge attributes
             s.graph.transforms.edge_data[(parent_node_name, node_name)].update(
                 {
                     "extras": {
-                        "joint": {
-                            "name": f"{namespace}/{joint.name}",
-                            "type": joint.type,
-                            "q": self._configuration[self._model.actuated_joints.index(joint)]
-                            if joint in self._model.actuated_joints
-                            else 0.0,
-                            "axis": joint.axis.tolist()
-                            if not joint.type == "fixed"
-                            else [1.0, 0, 0],
-                            "origin": joint.origin.tolist(),
-                            "limit_velocity": limit_velocity,
-                            "limit_effort": limit_effort,
-                            "limit_lower": limit_lower,
-                            "limit_upper": limit_upper,
-                        }
+                        "joint": joint_property_dict
                     }
                 }
             )
@@ -1020,6 +1036,12 @@ class USDAsset(Asset):
         )
         self._default_joint_limit_effort = kwargs.get(
             "default_joint_limit_effort", constants.DEFAULT_JOINT_LIMIT_EFFORT
+        )
+        self._default_joint_stiffness = kwargs.get(
+            "default_joint_stiffness", constants.DEFAULT_JOINT_STIFFNESS
+        )
+        self._default_joint_damping = kwargs.get(
+            "default_joint_damping", constants.DEFAULT_JOINT_DAMPING
         )
 
         self._configuration = None
@@ -1491,6 +1513,12 @@ class MJCFAsset(Asset):
         self._default_joint_limit_effort = kwargs.get(
             "default_joint_limit_effort", constants.DEFAULT_JOINT_LIMIT_EFFORT
         )
+        self._default_joint_stiffness = kwargs.get(
+            "default_joint_stiffness", constants.DEFAULT_JOINT_STIFFNESS
+        )
+        self._default_joint_damping = kwargs.get(
+            "default_joint_damping", constants.DEFAULT_JOINT_DAMPING
+        )
 
         self._configuration = None
 
@@ -1703,6 +1731,8 @@ class MJCFAsset(Asset):
                         "limit_upper": limit_upper,
                         "limit_effort": self._default_joint_limit_effort,
                         "limit_velocity": self._default_joint_limit_velocity,
+                        "stiffness": self._default_joint_stiffness,
+                        "damping": self._default_joint_damping,
                         "axis": joint_axis,
                     }
                 }
@@ -1788,51 +1818,59 @@ class TrimeshAsset(MeshAsset):
 
 
 class BoxAsset(TrimeshAsset):
-    def __init__(self, extents, **kwargs):
+    def __init__(self, extents, transform=None, **kwargs):
         """A box primitive.
 
         Args:
             extents (list[float]): 3D extents of the box.
+            transform (np.ndarray, optional):  4x4 homogeneous transformation matrix for box center. Defaults to None.
         """
-        super().__init__(mesh=trimesh.primitives.Box(extents=extents), **kwargs)
+        super().__init__(mesh=trimesh.primitives.Box(extents=extents, transform=transform), **kwargs)
 
 class BoxMeshAsset(TrimeshAsset):
-    def __init__(self, extents, **kwargs):
+    def __init__(self, extents, transform=None, **kwargs):
         """A triangular mesh in the shape of a box.
 
         Args:
             extents (list[float]): 3D extents of the box.
+            transform (np.ndarray, optional):  4x4 homogeneous transformation matrix for box center. Defaults to None.
         """
-        super().__init__(mesh=trimesh.creation.box(extents=extents), **kwargs)
+        super().__init__(mesh=trimesh.creation.box(extents=extents, transform=transform), **kwargs)
 
 class CylinderAsset(TrimeshAsset):
-    def __init__(self, radius, height, **kwargs):
+    def __init__(self, radius, height, transform=None, sections=32, **kwargs):
         """A cylinder primitive.
 
         Args:
             radius (float): Radius of cylinder.
             height (float): Height of cylinder.
+            transform (np.ndarray, optional):  4x4 homogeneous transformation matrix for cylinder center. Defaults to None.
+            sections (int, optional): Number of facets in circle. Defaults to 32.
         """
-        super().__init__(mesh=trimesh.primitives.Cylinder(radius=radius, height=height), **kwargs)
+        super().__init__(mesh=trimesh.primitives.Cylinder(radius=radius, height=height, transform=transform, sections=sections), **kwargs)
 
 class SphereAsset(TrimeshAsset):
-    def __init__(self, radius, **kwargs):
+    def __init__(self, radius, transform=None, subdivisions=3, **kwargs):
         """A sphere primitive.
 
         Args:
             radius (float): Radius of sphere.
+            transform (np.ndarray, optional):  4x4 homogeneous transformation matrix for sphere center. Defaults to None.
+            subdivisions (int, optional): Number of subdivisions for icosphere. Defaults to 3.
         """
-        super().__init__(mesh=trimesh.primitives.Sphere(radius=radius), **kwargs)
+        super().__init__(mesh=trimesh.primitives.Sphere(radius=radius, transform=transform, subdivisions=subdivisions), **kwargs)
 
 class CapsuleAsset(TrimeshAsset):
-    def __init__(self, radius, height, **kwargs):
+    def __init__(self, radius, height, transform=None, sections=32, **kwargs):
         """A capsule primitive.
 
         Args:
             radius (float): Radius of cylindrical part (and spherical end parts).
             height (float): Height of cylindrical part. Total height of capsule will be height + 2*radius.
+            transform (np.ndarray, optional):  4x4 homogeneous transformation matrix for capsule center. Defaults to None.
+            sections (int, optional): Number of facets in circle. Defaults to 32.
         """
-        super().__init__(mesh=trimesh.primitives.Capsule(radius=radius, height=height), **kwargs)
+        super().__init__(mesh=trimesh.primitives.Capsule(radius=radius, height=height, transform=transform, sections=sections), **kwargs)
 
 
 class TrimeshSceneAsset(Asset):
