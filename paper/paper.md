@@ -1,5 +1,5 @@
 ---
-title: '`scene_synthesizer`: A Python Library for Procedural Scene Generation in Robot Manipulation'
+title: 'scene_synthesizer: A Python Library for Procedural Scene Generation in Robot Manipulation'
 tags:
   - Python
   - Robotics

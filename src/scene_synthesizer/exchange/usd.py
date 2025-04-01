@@ -11,7 +11,7 @@ import trimesh.transformations as tra
 from ..usd_import import get_meters_per_unit, get_stage
 from ..utils import log
 from . import usd_export
-
+from ..constants import EDGE_KEY_METADATA
 
 def export_usd(
     scene,
@@ -97,7 +97,7 @@ def export_usd(
     if not write_usd_object_files:
         for obj_id in scene.get_object_names():
             # ensure that all nodes of an object do come from the same file
-            geom_names = scene.get_geometry_names(obj_id)
+            geom_names = scene.get_geometry_names(obj_id=obj_id)
             file_paths = [
                 scene.geometry[scene.graph[g][1]].metadata["file_path"]
                 for g in geom_names
@@ -190,7 +190,9 @@ def export_usd(
     def map_scene_path(path):
         if path in list(scene.metadata["object_nodes"].keys()):
             _, object_link_roots, _, _ = scene_object_links[path]
+            log.debug(f"Map {path} to {object_link_roots[0][0]}. Chosen among: {object_link_roots}")
             return object_link_roots[0][0]
+        log.debug(f"Map {path} to itself.")
         return path
 
     # add links
@@ -496,7 +498,7 @@ def export_usd(
             fixed_joint_partitions.append(child_path)
         else:
             log.warning(f"Unknown joint type, won't convert to USD: {joint_info['type']}")
-
+    
     # go through object graph
     cnt = 0
     for object_name in scene.get_object_names():
@@ -538,6 +540,8 @@ def export_usd(
             else:
                 link_offset = np.eye(4)
 
+            # Add node one collection node if link only contains geometries
+
             # Sort nodes to ensure reproducibility / same ordering within USD file
             for object_node in sorted(object_link.nodes):
                 log.debug(f"Going through {object_node}.")
@@ -577,16 +581,30 @@ def export_usd(
                     # g = self.scene.geometry[geom_name]
                     # The `include_cache=True` seems to have fixed it(?)
                     # I copy the visual properties separately
-                    g = scene.scene.geometry[geom_name].copy(include_cache=True)
+                    if isinstance(scene.scene.geometry[geom_name], trimesh.primitives.Primitive):
+                        g = scene.scene.geometry[geom_name].copy()
+                    else:                        
+                        g = scene.scene.geometry[geom_name].copy(include_cache=True)
+                    
                     g_vis = scene.scene.geometry[geom_name].visual.copy()
 
                     scene_path = scenegraph_to_usd_primpath[object_node]
 
                     log.debug(f"Adding geometry to USD stage: {scene_path}   (original: {object_node})")
+                    
+                    scene_path_extension = ""
+                    if len(object_link.nodes) == 1 and scene.is_articulated(object_name):
+                        usd_export.add_xform(
+                            stage=current_stage,
+                            scene_path=scene_path,
+                            transform=transform,
+                        )
+                        transform = np.eye(4)
+                        scene_path_extension = '/' +scene_path.split("/")[-1]
 
                     add_geometry_node(
                         stage=current_stage,
-                        scene_path=scene_path,
+                        scene_path=scene_path + scene_path_extension,
                         g=g,
                         g_vis=g_vis,
                         i=cnt,
@@ -638,7 +656,7 @@ def export_usd(
         parent_node = scene.graph.transforms.parents[object_name]
 
         edge_is_joint = (
-            "extras" in edge and edge["extras"] is not None and "joint" in edge["extras"]
+            EDGE_KEY_METADATA in edge and edge[EDGE_KEY_METADATA] is not None and "joint" in edge[EDGE_KEY_METADATA]
         )
         if scene.is_articulated(object_name):
             if not edge_is_joint:
@@ -679,7 +697,7 @@ def export_usd(
                     f"/world/{object_name.replace('-', '_').replace(':', '_').replace('.', '_')}/{fixed_joint_name.split('/')[-1]}"
                 )
 
-            joint_info = edge["extras"]["joint"]
+            joint_info = edge[EDGE_KEY_METADATA]["joint"]
 
             # Since the first link by convention is transformed by an identity
             # and will be identical to the object pose, the joint transforms
@@ -700,7 +718,7 @@ def export_usd(
                 body_1_transform=body_1_transform,
             )
         elif edge_is_joint:
-            joint_info = edge["extras"]["joint"]
+            joint_info = edge[EDGE_KEY_METADATA]["joint"]
 
             body_0_transform = scene.get_transform(object_name)
             body_1_transform = np.eye(4)
@@ -726,9 +744,28 @@ def export_usd(
                     mass_api=True,
                 )
 
+        def map_to_link_root(path, object_links, object_link_roots):
+            link_index = ([1 if path in l.nodes else 0 for l in object_links]).index(1)
+            link_root = object_link_roots[link_index][0]
+            return link_root
+        
         for object_joint_indices in object_joints:
             parent_node, child_node = object_joints[object_joint_indices][0]
-            joint_info = object_joints[object_joint_indices][1]["extras"]["joint"]
+            joint_info = object_joints[object_joint_indices][1][EDGE_KEY_METADATA]["joint"]
+
+            # TODO: clean up
+            parent_partition = parent_node
+            child_partition = child_node
+            log.debug(f"parent_node = {parent_node}, child_node = {child_node}")
+
+            # parent_partition = map_scene_path(parent_partition)
+            # child_partition = map_scene_path(child_partition)
+            parent_partition = map_to_link_root(parent_partition, object_links=object_links, object_link_roots=object_link_roots)
+            child_partition = map_to_link_root(child_partition, object_links=object_links, object_link_roots=object_link_roots)
+            log.debug(f"parent_partition = {parent_partition}, child_partition = {child_partition}")
+
+            parent_node = parent_partition
+            child_node = child_partition
 
             body_0_transform = scene._scene.graph.get(frame_to=child_node, frame_from=parent_node)[0]
             body_1_transform = np.eye(4)
@@ -737,14 +774,6 @@ def export_usd(
                 # and subsequent links (to account for the convention that the first link has identity transform)
                 link_offset = scene.get_transform(root_link_of_object, frame_from=object_name)
                 body_0_transform = link_offset @ body_0_transform
-
-            parent_partition = parent_node
-            child_partition = child_node
-            log.debug(f"parent_node = {parent_node}, child_node = {child_node}")
-
-            parent_partition = map_scene_path(parent_partition)
-            child_partition = map_scene_path(child_partition)
-            log.debug(f"parent_partition = {parent_partition}, child_partition = {child_partition}")
 
             parent_path = (
                 "/world"
@@ -854,7 +883,7 @@ def export_usd(
             
             # Determine how much the geometry is scaled w.r.t. to its initial size
             geom_scales = []
-            for object_geom_node_name in scene.get_geometry_names(object_name):
+            for object_geom_node_name in scene.get_geometry_names(obj_id=object_name):
                 object_geom_name = scene.graph.transforms.node_data[object_geom_node_name]['geometry']
                 if "extents" in scene.geometry[object_geom_name].metadata:
                     geom_scales.append(
@@ -1065,8 +1094,8 @@ def _get_object_links(obj_id, scene):
     to_remove = []
     tmp_joints = {}
     for e in object_graph.edges:
-        if object_graph.edges[e].get("extras") is not None and object_graph.edges[e].get(
-            "extras"
+        if object_graph.edges[e].get(EDGE_KEY_METADATA) is not None and object_graph.edges[e].get(
+            EDGE_KEY_METADATA
         ).get("joint", False):
             to_remove.append(e)
             tmp_joints[e] = object_graph.edges[e]

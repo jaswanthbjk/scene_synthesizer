@@ -216,6 +216,8 @@ class Asset(object):
         """
         if hasattr(self, "_fname") and len(self._fname) > 0:
             return os.path.basename(self._fname)
+        if hasattr(self, "_name") and len(self._name) > 0:
+            return self._name
         return utils.snake_case("".join(type(self).__name__.split("Asset")))
 
     def show(self, use_collision_geometry=False, layers=None):
@@ -649,17 +651,20 @@ class Asset(object):
             namespace=namespace, use_collision_geometry=use_collision_geometry
         )
 
+        trimesh_scene = utils.normalize_and_bake_scale(trimesh_scene)
+
         # scale asset
         scale = self._get_scale(raw_extents=trimesh_scene.extents)
         scaled_scene = utils.scaled_trimesh_scene(trimesh_scene, scale=scale)
 
         # add origin transform to root node
-        center_mass = utils.center_mass(
-            trimesh_scene=scaled_scene, node_names=scaled_scene.graph.nodes_geometry
-        )
+        if "center_mass" in self._attributes:
+            center_mass = self._attributes["center_mass"]
+        else:
+            center_mass = utils.center_mass(trimesh_scene=scaled_scene, node_names=scaled_scene.graph.nodes_geometry)
         origin = self._get_origin_transform(
             bounds=scaled_scene.bounds,
-            center_mass=self._attributes.get("center_mass", center_mass),
+            center_mass= center_mass,
             centroid=scaled_scene.centroid,
         )
 
@@ -724,6 +729,9 @@ class MeshAsset(Asset):
         self._fname = fname
         self._origin = np.eye(4)
         self._attributes = kwargs
+
+        if 'name' in kwargs:
+            self._name = kwargs['name']
 
         self._stable_poses = None
 
@@ -918,7 +926,7 @@ class URDFAsset(Asset):
                 f"{namespace}/{urdf_scene.graph.base_frame}",
                 {
                     "matrix": self._origin,
-                    "extras": {
+                    constants.EDGE_KEY_METADATA: {
                         "joint": {
                             "name": f"{namespace}/origin_joint",
                             "type": "fixed",
@@ -931,7 +939,10 @@ class URDFAsset(Asset):
         # copy geometries
         geometry = {}
         for k, v in urdf_scene.geometry.items():
-            geometry[f"{namespace}/{k}"] = v.copy(include_cache=True)
+            if isinstance(v, trimesh.primitives.Primitive):
+                geometry[f"{namespace}/{k}"] = v.copy()
+            else:
+                geometry[f"{namespace}/{k}"] = v.copy(include_cache=True)
             # This is required in the latest trimesh version, see
             # https://github.com/mikedh/trimesh/issues/1989
             geometry[f"{namespace}/{k}"].density = v.density
@@ -988,7 +999,7 @@ class URDFAsset(Asset):
             # add articulation data as edge attributes
             s.graph.transforms.edge_data[(parent_node_name, node_name)].update(
                 {
-                    "extras": {
+                    constants.EDGE_KEY_METADATA: {
                         "joint": joint_property_dict
                     }
                 }
@@ -1130,7 +1141,7 @@ class USDAsset(Asset):
         # collect xforms / transformations
         added_joint_names = []
         xform_paths = sorted(usd_import.get_scene_paths(stage=stage, prim_types=["Xform", "Scope"]))
-        log.debug("All xpaths found:\n", "\n".join(map(str, xform_paths)))
+        log.debug("All xpaths found:\n" + "\n".join(map(str, xform_paths)))
 
         failure_cnt = 0
         q_index = 0
@@ -1315,7 +1326,7 @@ class USDAsset(Asset):
 
                     # Add an additional node since USD joints have relative transforms w.r.t. body0 and body1
                     joint_node_frame = joint_name + "_frame"
-                    log.debug(f"Adding {parent_node_name} --> {joint_node_frame}")
+                    log.debug(f"Adding joint {joint_name} with nodes {parent_node_name} --> {joint_node_frame}")
                     utils.add_node_to_scene(
                         scene=s,
                         node_name=joint_node_frame,
@@ -1323,7 +1334,7 @@ class USDAsset(Asset):
                         transform=np.eye(4),
                         geom_name=None,
                         geometry=None,
-                        extras=extras,
+                        **{constants.EDGE_KEY_METADATA: extras},
                     )
 
                     parent_node_name = joint_node_frame
@@ -1340,8 +1351,8 @@ class USDAsset(Asset):
                 transform=matrix,
                 geom_name=None,
                 geometry=None,
-                extras=extras,
                 node_data={"prim_path": xform_path.pathString},
+                **{constants.EDGE_KEY_METADATA: extras},
             )
 
         # add meshes
@@ -1539,6 +1550,9 @@ class MJCFAsset(Asset):
         def create_identifier(elem):
             if elem == worldbody:
                 return namespace
+            log.debug(f"Create identifier for MJCF element: {elem} (full: {elem.full_identifier})")
+            if elem.full_identifier is None:
+                return None
             return namespace + '/' + elem.full_identifier.replace("/", "")
         
         return create_identifier
@@ -1564,11 +1578,14 @@ class MJCFAsset(Asset):
 
         if elem.tag == "body":
             log.debug(f"Adding body {identifier_fn(elem)} to {identifier_fn(elem.parent)}")
+
+            body_T = self._get_transform(elem, rad_conversion_fn)
+
             node_name = utils.add_node_to_scene(
                 scene=scene,
                 parent_node_name=identifier_fn(elem.parent),
                 node_name=identifier_fn(elem),
-                transform=np.eye(4),
+                transform=body_T,
             )
         elif elem.tag == "geom":
             log.debug(f"Adding geom {identifier_fn(elem)} to {identifier_fn(elem.parent)}")
@@ -1579,6 +1596,12 @@ class MJCFAsset(Asset):
                     trimesh.util.wrap_as_stream(elem.mesh.file.contents),
                     file_type=elem.mesh.file.extension[1:],
                 )
+                
+                if hasattr(elem.mesh, 'scale') and elem.mesh.scale is not None:
+                    geometry.apply_scale(elem.mesh.scale)
+
+                geometry_T = self._get_transform(elem, rad_conversion_fn)
+                geometry.apply_transform(geometry_T)
 
                 # Set mesh material
                 if elem.material is not None:
@@ -1600,7 +1623,7 @@ class MJCFAsset(Asset):
                         # 'roughness'
                         # 'rgba'
 
-                        geometry.visual = trimesh.visual.ColorVisuals(mesh=geometry, face_colors=face_colors)   
+                        geometry.visual = trimesh.visual.ColorVisuals(mesh=geometry, face_colors=face_colors)
             elif elem.type == "sphere":
                 # The sphere type defines a sphere.
                 # Only one size parameter is used, specifying the radius of the sphere.
@@ -1693,6 +1716,19 @@ class MJCFAsset(Asset):
         for child in elem.all_children():
             self._traverse_xml_tree(elem=child, node_name=node_name, scene=scene, identifier_fn=identifier_fn, rad_conversion_fn=rad_conversion_fn, use_collision_geometry=use_collision_geometry)
     
+    def _get_default_joint_attribute(self, attribute, joint, my_default):
+        joint_value = getattr(joint, attribute, None)
+        if joint_value is None:
+            joint_default = joint.dclass
+            while joint_default is not None and joint_value is None and joint_default != joint_default.root:
+                joint_value = getattr(joint_default.joint, attribute)
+                joint_default = joint_default.parent
+
+        if joint_value is None:
+            return my_default
+
+        return joint_value
+
     def _add_mjcf_joint(self, scene, scene_edge_data, parent_node, child_node, joint, identifier_fn, rad_conversion_fn):
         new_parent_node = scene.graph.transforms.parents[child_node]
 
@@ -1712,16 +1748,24 @@ class MJCFAsset(Asset):
             limit_lower = rad_conversion_fn(joint.range[0])
             limit_upper = rad_conversion_fn(joint.range[1])
 
-        joint_pos = joint.pos if joint.pos is not None else [0., 0., 0.]
+        # Check default values
+        joint_range = self._get_default_joint_attribute('range', joint, None)
+        if joint_range is None:
+            limit_lower, limit_upper = self._default_joint_limit_lower, self._default_joint_limit_upper
+        else:
+            limit_lower, limit_upper = rad_conversion_fn(joint_range[0]), rad_conversion_fn(joint_range[1])
+        joint_pos = self._get_default_joint_attribute('pos', joint, [0., 0., 0.])
+        joint_axis = self._get_default_joint_attribute('axis', joint, [0., 0., 1.])
+        joint_type = self._get_default_joint_attribute('type', joint, 'revolute')    
+        if joint_type == "slide":
+            joint_type = "prismatic"
 
-        joint_type = "prismatic" if joint.type == 'slide' else "revolute"
-
-        joint_axis = joint.axis if joint.axis is not None else [0., 0., 1.]
-
+        log.debug(f"{joint_pos}, {joint_type}, {joint_axis}, {limit_lower}, {limit_upper}")
+        
         # add edges
         scene_edge_data[(new_parent_node, new_child_node)].update(
             {
-                "extras": {
+                constants.EDGE_KEY_METADATA: {
                     "joint": {
                         "name": identifier_fn(joint),
                         "type": joint_type,
@@ -1814,6 +1858,9 @@ class TrimeshAsset(MeshAsset):
         self._origin = np.eye(4)
         self._attributes = kwargs
 
+        if 'name' in kwargs:
+            self._name = kwargs['name']
+
         self._model = mesh.scene()
 
 
@@ -1884,6 +1931,9 @@ class TrimeshSceneAsset(Asset):
         self._origin = np.eye(4)
         self._attributes = kwargs
 
+        if 'name' in kwargs:
+            self._name = kwargs['name']
+
         self._model = scene
 
     def _as_trimesh_scene(self, namespace="object", use_collision_geometry=True):
@@ -1894,7 +1944,6 @@ class TrimeshSceneAsset(Asset):
         # save transforms as edge tuples
         edges = []
 
-        # print([geom[1].metadata for geom in self._model.geometry.items()])
         # Attention: Metadata for geoms is not copied when using copy()
         scene_to_add = self._model
 
@@ -1929,6 +1978,19 @@ class TrimeshSceneAsset(Asset):
 
         return result
 
+
+class LPrismAsset(TrimeshSceneAsset):
+    def __init__(self, extents, recess, **kwargs):
+        if recess == 0.:
+            scene = trimesh.Scene([
+                trimesh.primitives.Box(extents=extents)
+            ])
+        else:
+            box_0 = trimesh.primitives.Box(extents=[extents[0], extents[1] - recess, extents[2]], transform=tra.translation_matrix((0, recess/2.0, 0)))
+            box_1 = trimesh.primitives.Box(extents=[extents[0] - recess, recess, extents[2]], transform=tra.translation_matrix([+recess/2.0, -(extents[1] - recess)/2.0, 0.0]))
+            scene = trimesh.Scene([box_0, box_1])
+        
+        super().__init__(scene=scene, **kwargs)
 
 class BoxWithHoleAsset(TrimeshSceneAsset):
     def __init__(

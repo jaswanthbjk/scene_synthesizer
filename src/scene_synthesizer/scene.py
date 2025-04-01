@@ -29,6 +29,7 @@ from . import utils
 from .assets import Asset, BoxAsset, BoxMeshAsset, BoxWithHoleAsset, TrimeshAsset, TrimeshSceneAsset
 from .exchange import export
 from .utils import log
+from .constants import EDGE_KEY_METADATA, DEFAULT_JOINT_LIMIT_LOWER, DEFAULT_JOINT_LIMIT_UPPER
 
 try:
     # Third Party
@@ -715,9 +716,9 @@ class Scene(object):
             parent = self._scene.graph.transforms.parents[n]
             edge_data = self._scene.graph.transforms.edge_data[(parent, n)]
             articulated_node = (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
             )
             if n not in self._scene.graph.geometry_nodes and not articulated_node:
                 # node does not have geometry attached to it and will be removed
@@ -735,15 +736,15 @@ class Scene(object):
                     children_extras = {}
                     for x in self._scene.graph.transforms.children[n]:
                         edge_data = self._scene.graph.transforms.edge_data[(n, x)]
-                        children_extras[x] = {"extras": edge_data.get("extras", None)}
+                        children_extras[x] = {EDGE_KEY_METADATA: edge_data.get(EDGE_KEY_METADATA, None)}
                         if (
-                            "extras" in edge_data
-                            and edge_data["extras"] is not None
-                            and "joint" in edge_data["extras"]
+                            EDGE_KEY_METADATA in edge_data
+                            and edge_data[EDGE_KEY_METADATA] is not None
+                            and "joint" in edge_data[EDGE_KEY_METADATA]
                         ):
-                            if "origin" in edge_data["extras"]["joint"]:
-                                children_extras[x]["extras"]["joint"]["origin"] = (
-                                    T_parent @ children_extras[x]["extras"]["joint"]["origin"]
+                            if "origin" in edge_data[EDGE_KEY_METADATA]["joint"]:
+                                children_extras[x][EDGE_KEY_METADATA]["joint"]["origin"] = (
+                                    T_parent @ children_extras[x][EDGE_KEY_METADATA]["joint"]["origin"]
                                 )
 
                     self._scene.graph.transforms.remove_node(n)
@@ -809,16 +810,16 @@ class Scene(object):
         for k in scene_edge_data:
             edge_data = scene_edge_data[k]
             if (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
             ):
-                joint_data = edge_data["extras"]["joint"]
+                joint_data = edge_data[EDGE_KEY_METADATA]["joint"]
                 joint_map[joint_data["name"]] = k
 
         # Apply the name mapping
         for old_name, new_name in mappings:
-            scene_edge_data[joint_map[old_name]]["extras"]["joint"]["name"] = new_name
+            scene_edge_data[joint_map[old_name]][EDGE_KEY_METADATA]["joint"]["name"] = new_name
 
         # clear cache
         self.get_joint_names.cache_clear()
@@ -1431,7 +1432,7 @@ class Scene(object):
                 (self._scene.graph.transforms.parents[obj_id], obj_id)
             ].update(
                 {
-                    "extras": {
+                    EDGE_KEY_METADATA: {
                         "joint": {
                             "name": f"{obj_id}/{parent_id.replace('/', '_')}_{joint_type}_joint",
                             "type": joint_type,
@@ -1503,43 +1504,54 @@ class Scene(object):
 
         return True
 
-    def get_geometry(self, node_id):
-        """Return trimesh geometry associated with node node_id.
-        Returns None if no geometry is associated with the node.
+    def get_geometries(self, query=None):
+        """Returns a list of trimesh geometries associated with the query.
 
         Args:
-            node_id (str): Identifier of the scene graph node.
-
-        Raises:
-            ValueError: Raise exception if node with name node_id does not exist.
+            query (str): A regular expression that gets matched against geometry names. None will include all geometries. Defaults to None.
 
         Returns:
-            trimesh.Trimesh: Geometry associated with the node.
+            List[trimesh.Trimesh]: Geometries matching the query.
         """
-        node_data = self.graph.transforms.node_data.get(node_id)
-
-        if node_data is None:
-            raise ValueError(f"Node '{node_id}' doesn't exist in scene graph.")
+        if query is None:
+            geom_names = sorted(list(self.scene.geometry.keys()))
+        else:
+            geom_names = utils.select_sublist(
+                query=query, all_items=sorted(list(self.scene.geometry.keys()))
+            )
         
-        geom_name = node_data.get('geometry', None)
-
-        if geom_name is None:
-            return None
-
-        return self.geometry[geom_name]
-
-    def get_geometry_names(self, obj_id=None):
+        return [self.geometry[n] for n in geom_names]
+    
+    def get_geometry_names(self, query=None, obj_id=None):
         """Return all geometry node names associated with that object or all geometry node names in the scene.
 
         Args:
-            obj_id (str, optional): Object identifier. If None entire scene is considered. Defaults to None.
+            query (str or list[str]): A geometry name or list of names or regular expression. None will include all geometries if obj_id is also None. Defaults to None.
+            obj_id (str, optional): Object identifier. If None, and query is None entire scene is considered. Defaults to None.
 
         Returns:
             list(str): List of geometry names.
         """
-        if obj_id is None:
-            return list(itertools.chain.from_iterable(self.metadata["object_geometry_nodes"].values()))
-        return self._scene.metadata["object_geometry_nodes"][obj_id]
+        if query is None and obj_id is None:
+            node_names = set(self.scene.graph.nodes_geometry)
+        elif obj_id is None:
+            if type(query) is list or type(query) is tuple:
+                node_names = []
+                for k in query:
+                    if k in self.metadata["object_nodes"]:
+                        node_names.extend(self.metadata["object_nodes"][k])
+                    else:
+                        node_names.append(k)
+                node_names = set(self.scene.graph.nodes_geometry).intersection(set(node_names))
+            else:
+                node_names = utils.select_sublist(
+                    query=query, all_items=self.scene.graph.nodes_geometry
+                )
+        else:
+            node_names = self._scene.metadata["object_geometry_nodes"][obj_id]
+
+        return node_names
+        # return [self.graph[n][1] for n in sorted(node_names)]
 
     def get_object_name(self, node_id):
         """Return object name given a scene graph node.
@@ -1607,7 +1619,7 @@ class Scene(object):
                 # Skip edges that connect a node that is not of interest
                 continue
 
-            if "extras" not in e[2] or e[2]["extras"] is None or "joint" not in e[2]["extras"]:
+            if EDGE_KEY_METADATA not in e[2] or e[2][EDGE_KEY_METADATA] is None or "joint" not in e[2][EDGE_KEY_METADATA]:
                 edges.append(e)
             else:
                 tmp_joints.append(e)
@@ -1849,13 +1861,13 @@ class Scene(object):
         for k in self._scene.graph.transforms.edge_data:
             edge_data = scene_edge_data[k]
             if (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
-                and (obj_id is None or edge_data["extras"]["joint"]["name"].startswith(obj_id + '/'))
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
+                and (obj_id is None or edge_data[EDGE_KEY_METADATA]["joint"]["name"].startswith(obj_id + '/'))
             ):
-                if edge_data["extras"]["joint"]["type"] in joint_types:
-                    joint_names.append(edge_data["extras"]["joint"]["name"])
+                if edge_data[EDGE_KEY_METADATA]["joint"]["type"] in joint_types:
+                    joint_names.append(edge_data[EDGE_KEY_METADATA]["joint"]["name"])
 
         joint_names = sorted(joint_names)
 
@@ -1870,7 +1882,9 @@ class Scene(object):
         Returns:
             bool: True if object/scene is articulated.
         """
-        return len(self.get_joint_names(obj_id=obj_id)) > 0
+        if obj_id is None:
+            return len(self.get_joint_names()) > 0
+        return len(self.get_joint_names(obj_id=obj_id)) > 0 or len(self.get_joint_names(obj_id=obj_id, joint_type_query='fixed')) > 1
 
     @functools.lru_cache(maxsize=None)
     def get_joint_properties(self, obj_id=None, include_fixed_floating_joints=False):
@@ -1888,12 +1902,12 @@ class Scene(object):
         for k in self._scene.graph.transforms.edge_data:
             edge_data = scene_edge_data[k]
             if (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
-                and (obj_id is None or edge_data["extras"]["joint"]["name"].startswith(obj_id))
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
+                and (obj_id is None or edge_data[EDGE_KEY_METADATA]["joint"]["name"].startswith(obj_id))
             ):
-                joint_data = edge_data["extras"]["joint"]
+                joint_data = edge_data[EDGE_KEY_METADATA]["joint"]
                 if include_fixed_floating_joints or joint_data["type"] not in ["fixed", "floating"]:
                     joint_props[joint_data["name"]] = joint_data
 
@@ -1929,7 +1943,7 @@ class Scene(object):
         if (parent_node, child_node) not in scene_edge_data:
             raise ValueError(f"Joint {joint_id} not in scene. Can't update its properties.")
 
-        scene_edge_data[(parent_node, child_node)]["extras"]["joint"].update({**kwargs})
+        scene_edge_data[(parent_node, child_node)][EDGE_KEY_METADATA]["joint"].update({**kwargs})
 
         # clear cache
         self.get_joint_names.cache_clear()
@@ -2127,20 +2141,21 @@ class Scene(object):
         Args:
             parent_node (str): Parent node in the scene graph.
             child_node (str): Child node in the scene graph.
-            name (str): Identifier of the joint. Should be of the form <obj_id>/<joint_id>.
+            name (str): Identifier of the joint. Needs to be of the form <obj_id>/<joint_id>.
             type (str): 'revolute', 'prismatic', 'floating', or 'fixed'.
             **q (float, optional): Configuration of the joint. Defaults to 0.0.
             **origin (np.ndarray, optional): Homogenous matrix representing origin of joint. Defaults to self.get_transform(frame_to=child_node, frame_from=parent_node).
             **axis (list[float], optional): Axis of the joint. Defaults to [1, 0, 0].
+            **limit_lower (float, optional): Lower joint limit. Defaults to constanst.DEFAULT_LIMIT_LOWER for revolute and prismatic joints.
+            **limit_upper (float, optional): Upper joint limit. Defaults to constanst.DEFAULT_LIMIT_UPPER for revolute and prismatic joints.
             **limit_velocity (float, optional): Joint velocity limit. Defaults to None.
             **limit_effort (float, optional): Joint effort limit. Defaults to None.
-            **limit_lower (float, optional): Lower joint limit. Defaults to None.
-            **limit_upper (float, optional): Upper joint limit. Defaults to None.
             **stiffness (float, optional): Joint stiffness. Defaults to None.
             **damping (float, optional): Joint damping. Defaults to None.
 
         Raises:
             ValueError: If name already exists.
+            ValueError: If name is not of the form <obj_id>/<joint_id>.
             ValueError: If type is not one of the predefined ones.
             ValueError: If there's no edge in the scene graph between parent_node and child_node.
             ValueError: If there's already a joint in the scene graph between parent_node and child_node.
@@ -2152,21 +2167,30 @@ class Scene(object):
         if type not in ["revolute", "prismatic", "fixed", "floating"]:
             raise ValueError(f"Joint type {type} needs to be one of: revolute, prismatic, floating, fixed.")
 
-        if type != "fixed":
+        if type != "fixed" and type != "floating":
             if "q" not in kwargs:
                 kwargs["q"] = 0.0
             if "origin" not in kwargs:
-                kwargs["origin"] = self.get_transform(frame_to=child_node, frame_from=parent_node)
+                kwargs["origin"] = self.get_transform(node=child_node, frame_from=parent_node)
             if "axis" not in kwargs:
                 kwargs["axis"] = np.array([1.0, 0, 0])
+            if "limit_lower" not in kwargs:
+                kwargs["limit_lower"] = DEFAULT_JOINT_LIMIT_LOWER
+            if "limit_lower" not in kwargs:
+                kwargs["limit_upper"] = DEFAULT_JOINT_LIMIT_UPPER
 
         scene_edge_data = self._scene.graph.transforms.edge_data
         if (parent_node, child_node) not in scene_edge_data:
             raise ValueError(f"No edge between {parent_node} and {child_node} in the scene graph.")
 
+        parent_child_node_obj_ids = [parent_node.split('/')[0], child_node.split('/')[0]]
+        if not '/' in name or not name.split('/')[0] in parent_child_node_obj_ids:
+            raise ValueError(f"Joint name {name} must be of the form <obj_id>/<joint_id>. Given parent and child node, <obj_id> can be {parent_child_node_obj_ids}.")
+
         if (
-            "extras" in scene_edge_data[(parent_node, child_node)]
-            and "joint" in scene_edge_data[(parent_node, child_node)]["extras"]
+            EDGE_KEY_METADATA in scene_edge_data[(parent_node, child_node)]
+            and scene_edge_data[(parent_node, child_node)][EDGE_KEY_METADATA] is not None
+            and "joint" in scene_edge_data[(parent_node, child_node)][EDGE_KEY_METADATA]
         ):
             raise ValueError(
                 f"Can't add joint between {parent_node} and {child_node} in the scene graph."
@@ -2174,7 +2198,7 @@ class Scene(object):
             )
 
         scene_edge_data[(parent_node, child_node)].update(
-            {"extras": {"joint": {"name": name, "type": type, **kwargs}}}
+            {EDGE_KEY_METADATA: {"joint": {"name": name, "type": type, **kwargs}}}
         )
 
         # clear cache
@@ -2198,12 +2222,12 @@ class Scene(object):
         for k in self._scene.graph.transforms.edge_data:
             edge_data = scene_edge_data[k]
             if (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
-                and edge_data["extras"]["joint"]["name"] in joint_ids
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
+                and edge_data[EDGE_KEY_METADATA]["joint"]["name"] in joint_ids
             ):
-                del self._scene.graph.transforms.edge_data[k]["extras"]["joint"]
+                del self._scene.graph.transforms.edge_data[k][EDGE_KEY_METADATA]["joint"]
 
         # clear cache
         self.get_joint_names.cache_clear()
@@ -2228,15 +2252,15 @@ class Scene(object):
             edge_data = scene_edge_data[(parent, n)]
             # check if articulation between n and parent
             if (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
             ):
-                if include_fixed_floating_joints or edge_data["extras"]["joint"]["type"] not in [
+                if include_fixed_floating_joints or edge_data[EDGE_KEY_METADATA]["joint"]["type"] not in [
                     "fixed",
                     "floating",
                 ]:
-                    return edge_data["extras"]["joint"]["name"]
+                    return edge_data[EDGE_KEY_METADATA]["joint"]["name"]
 
             n = parent
 
@@ -2258,10 +2282,10 @@ class Scene(object):
         for edge in scene_edge_data:
             edge_data = scene_edge_data[edge]
             if (
-                "extras" in edge_data
-                and edge_data["extras"] is not None
-                and "joint" in edge_data["extras"]
-                and edge_data["extras"]["joint"]["name"] == joint_id
+                EDGE_KEY_METADATA in edge_data
+                and edge_data[EDGE_KEY_METADATA] is not None
+                and "joint" in edge_data[EDGE_KEY_METADATA]
+                and edge_data[EDGE_KEY_METADATA]["joint"]["name"] == joint_id
             ):
                 return edge
 
@@ -2729,7 +2753,7 @@ class Scene(object):
         else:
             obj_ids = list(self._scene.metadata["object_nodes"].keys())
 
-        geometry_names = [item for name in obj_ids for item in self.get_geometry_names(name)]
+        geometry_names = [item for name in obj_ids for item in self.get_geometry_names(obj_id=name)]
         if "geom_ids" in kwargs:
             x = re.compile(kwargs["geom_ids"])
             geometry_names = list(filter(x.search, geometry_names))
@@ -3570,6 +3594,7 @@ class Scene(object):
         if not specific_objects and not specific_geometries:
             for _, obj_mesh in self._scene.geometry.items():
                 full_color = utils.adjust_color(color=color, seed=self._rng, **kwargs)
+                log.debug(f"Colorize everything. Using color: {full_color}")
                 # Some meshes don't have the face_color property.
                 # In this case the method would crash.
                 # We're just ignoring those meshes.
@@ -3587,6 +3612,7 @@ class Scene(object):
 
         for obj_id, color in specific_objects.items():
             full_color = utils.adjust_color(color=color, seed=self._rng, **kwargs)
+            log.debug(f"Colorize specific objects. Using color: {full_color}")
             try:
                 geom_names = [self.graph[gn][1] for gn in self._scene.metadata["object_geometry_nodes"][obj_id]]
                 for geometry_name in geom_names:
@@ -3602,6 +3628,7 @@ class Scene(object):
 
         for geometry_name, color in specific_geometries.items():
             full_color = utils.adjust_color(color=color, seed=self._rng, **kwargs)
+            log.debug(f"Colorize specific geometries. Using color: {full_color}")
             try:
                 if not self._scene.geometry[geometry_name].visual.defined or reset_visuals:
                     self._scene.geometry[geometry_name].visual = trimesh.visual.create_visual(
@@ -4092,11 +4119,11 @@ class Scene(object):
         for edge in G.edges:
             scene_edge = [e for e in edges if e[0] == edge[0] and e[1] == edge[1]][0]
             if (
-                "extras" in scene_edge[2]
-                and scene_edge[2]["extras"] is not None
-                and "joint" in scene_edge[2]["extras"]
+                EDGE_KEY_METADATA in scene_edge[2]
+                and scene_edge[2][EDGE_KEY_METADATA] is not None
+                and "joint" in scene_edge[2][EDGE_KEY_METADATA]
             ):
-                color = edge_color_joints.get(scene_edge[2]["extras"]["joint"]["type"], edge_color_joint)
+                color = edge_color_joints.get(scene_edge[2][EDGE_KEY_METADATA]["joint"]["type"], edge_color_joint)
                 edge_colors.append(color)
             else:
                 edge_colors.append(edge_color)

@@ -22,6 +22,8 @@ import trimesh.path
 import trimesh.transformations as tra
 from shapely.geometry import Point
 
+from .constants import EDGE_KEY_METADATA
+
 try:
     # Third Party
     from scipy.spatial import QhullError
@@ -72,8 +74,11 @@ def get_mass_properties(trimesh_geometry, min_thickness=1e-3):
     center_mass = trimesh_geometry.metadata.get("center_mass", None)
 
     watertight_geometry = get_watertight_trimesh_geometry(trimesh_geometry)
-
-    watertight_geometry.density = trimesh_geometry.density
+    
+    if watertight_geometry.density != trimesh_geometry.density:
+        # Sometimes the density is configured immutable (ValueError)
+        # e.g. a bounding box of box with extents 0.0 in one dimension
+        watertight_geometry.density = trimesh_geometry.density
 
     if watertight_geometry.volume == 0.0:
         min_bbox = np.max([watertight_geometry.extents, [min_thickness] * 3], axis=0)
@@ -804,7 +809,7 @@ def add_node_to_scene(scene, **kwargs):
         **geometry (trimesh.Trimesh, ...): Added geometry.
         **geom_name (str): Name of the added geometry.
         **transform (np.ndarray): 4x4 homomgeneous transformation matrix that applies to the added node.
-        **extras (dict): Optional metadata for the node.
+        **constants.EDGE_KEY_METADATA (dict): Optional metadata for the node.
         **node_data (dict): A node data dictionary.
     """
     node_data = kwargs.pop("node_data", None)
@@ -813,7 +818,7 @@ def add_node_to_scene(scene, **kwargs):
             frame_from=kwargs["parent_node_name"],
             frame_to=kwargs["node_name"],
             matrix=kwargs["transform"],
-            extras=kwargs.get("extras", None),
+            **{EDGE_KEY_METADATA: kwargs.get(EDGE_KEY_METADATA, None)},
         )
         node_name = kwargs["node_name"]
     else:
@@ -1026,7 +1031,7 @@ def scaled_trimesh_scene(scene, scale):
                     node_name=n,
                     parent_node_name=p,
                     transform=result.graph.transforms.edge_data[(p, n)].get("matrix", None),
-                    extras=result.graph.transforms.edge_data[(p, n)].get("extras", None),
+                    **{EDGE_KEY_METADATA: result.graph.transforms.edge_data[(p, n)].get(EDGE_KEY_METADATA, None)},
                 )
             result.delete_geometry(geom_name)
 
@@ -1074,9 +1079,9 @@ def scaled_trimesh_scene(scene, scale):
     edge_data = result.graph.transforms.edge_data
     for uv in edge_data:
         props = edge_data[uv]
-        if "extras" in props and props["extras"] is not None and "joint" in props["extras"]:
-            if "origin" in props["extras"]["joint"]:
-                origin = np.array(props["extras"]["joint"]["origin"])
+        if EDGE_KEY_METADATA in props and props[EDGE_KEY_METADATA] is not None and "joint" in props[EDGE_KEY_METADATA]:
+            if "origin" in props[EDGE_KEY_METADATA]["joint"]:
+                origin = np.array(props[EDGE_KEY_METADATA]["joint"]["origin"])
                 T = np.copy(result.graph[uv[0]][0])
                 origin_w = T @ origin
                 origin_w[:3, 3] *= scale
@@ -1103,7 +1108,7 @@ def scaled_trimesh_scene(scene, scale):
 
     # Scale all joint origins
     for uv in joint_origins_world_scaled:
-        joint_data = edge_data[uv]["extras"]["joint"]
+        joint_data = edge_data[uv][EDGE_KEY_METADATA]["joint"]
 
         origin = tra.inverse_matrix(scaled_Ts[uv[0]]) @ joint_origins_world_scaled[uv]
         joint_data["origin"] = origin
@@ -1160,11 +1165,11 @@ def forward_kinematics(scene, joint_names=None, configuration=None):
     for k in scene.graph.transforms.edge_data:
         edge_data = scene_edge_data[k]
         if (
-            "extras" in edge_data
-            and edge_data["extras"] is not None
-            and "joint" in edge_data["extras"]
+            EDGE_KEY_METADATA in edge_data
+            and edge_data[EDGE_KEY_METADATA] is not None
+            and "joint" in edge_data[EDGE_KEY_METADATA]
         ):
-            joint_data = edge_data["extras"]["joint"]
+            joint_data = edge_data[EDGE_KEY_METADATA]["joint"]
             joint_map[joint_data["name"]] = k
 
     if joint_names is None:
@@ -1173,7 +1178,7 @@ def forward_kinematics(scene, joint_names=None, configuration=None):
     for i, joint_name in enumerate(joint_names):
         matrix = None
         edge_data = scene_edge_data[joint_map[joint_name]]
-        joint_data = edge_data["extras"]["joint"]
+        joint_data = edge_data[EDGE_KEY_METADATA]["joint"]
 
         if joint_data["type"] == "fixed" or joint_data["type"] == "floating":
             matrix = None
@@ -1280,7 +1285,7 @@ def adjust_color(color=None, brightness=1.0, transparency=1.0, seed=None):
     full_color = np.array(full_color, dtype=np.float32)
     full_color[:3] *= brightness
     full_color[3] *= transparency
-    return full_color
+    return full_color.astype(np.uint8)
 
 def append_scenes(iterable, common=["world"], base_frame="world", share_geometry=False):
     """
@@ -1512,3 +1517,47 @@ def create_torus(major_radius, minor_radius, num_major_segments=30, num_minor_se
     # Create a trimesh object from vertices and faces
     torus_mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
     return torus_mesh
+
+def normalize_and_bake_scale(trimesh_scene):
+    """Takes a trimesh scene and bakes all scale information contained in the transform tree
+    into the vertices of all meshes.
+    The resulting tree transforms will all have scale 1.
+
+    Args:
+        trimesh_scene (trimesh.Scene): A trimesh scene object.
+
+    Returns:
+        trimesh.Scene: The transformed scene (or same if scene transform tree doesn't change scale).
+    """
+    # check for all meshes whether scale is part of their transform path
+    # if yes, bake the scale information into vertices
+    for node in trimesh_scene.graph.nodes_geometry:
+        T, geom_name = trimesh_scene.graph[node]
+
+        scale, _, _, _, _ = tra.decompose_matrix(T)
+
+        if not np.allclose(scale, 1.0):
+            log.debug(f"Geometry {geom_name} has non-normalized scale {scale} in transform tree. Will normalize.")
+
+            trimesh_scene.geometry[geom_name].apply_scale(scale)
+        
+    # Go through the entire transform tree and normalize all transforms
+    for (frame_from, frame_to) in list(trimesh_scene.graph.transforms.edge_data.keys()):
+        attr = trimesh_scene.graph.transforms.edge_data[(frame_from, frame_to)]
+        T = attr['matrix']
+
+        scale, _, T_angles, T_translate, _ = tra.decompose_matrix(T)
+
+        if not np.allclose(scale, 1.0):
+            log.debug(f"Normalizing transform (frame_from={frame_from}, frame_to={frame_to}) with scale {scale}.")
+
+            T_new = tra.compose_matrix(angles=T_angles, translate=T_translate)
+            attr['matrix'] = T_new
+
+            trimesh_scene.graph.update(
+                frame_from=frame_from,
+                frame_to=frame_to,
+                **attr,
+            )
+
+    return trimesh_scene

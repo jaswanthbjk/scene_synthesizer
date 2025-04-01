@@ -287,11 +287,11 @@ def _get_flattened_mesh_attributes(stage, scene_path, with_materials, with_norma
         mesh_display_color = mesh_primvars.GetPrimvar("displayColor")
         if mesh_display_color and mesh_display_color.Get():
             display_color = mesh_display_color.Get()[0]
-            attrs["display_color"] = [
+            attrs["display_color"] = np.array([
                 display_color[0] * 255,
                 display_color[1] * 255,
                 display_color[2] * 255,
-            ]
+            ], dtype=np.uint8)
 
         # Parse mesh UVs
         if mesh_st:
@@ -714,7 +714,7 @@ def import_primitive(stage, scene_path=None):
         primitive_data["radius"] = UsdGeom.Sphere(prim).GetRadiusAttr().Get() * meters_per_unit
 
         if prim.HasProperty("xformOp:scale"):
-            primitive_data["radius"] = prim.GetProperty("xformOp:scale").Get()[0]
+            primitive_data["radius"] *= prim.GetProperty("xformOp:scale").Get()[0]
     elif primitive_data["type"] == "Cylinder":
         primitive_data["radius"] = UsdGeom.Cylinder(prim).GetRadiusAttr().Get() * meters_per_unit
         primitive_data["height"] = UsdGeom.Cylinder(prim).GetHeightAttr().Get() * meters_per_unit
